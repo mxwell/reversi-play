@@ -12,7 +12,7 @@ var CELL_BORDER = 3;
 var CELL_CENTER_OFFSET = CELL_BORDER + CELL_SIZE / 2;
 var DISK_RADIUS = CELL_SIZE * 0.375;
 var DISK_BORDER = 2;
-var N = 8;
+var N = 5;
 var GRID_SIZE = (CELL_SIZE) * N + CELL_BORDER;
 var BG_COLOR = '#00CC66'; /* nice green */
 var GRID_COLOR = '#003366'; /* dark blue */
@@ -130,22 +130,26 @@ if (Meteor.isClient) {
   }
 
   var markVacant = function (i, j) {
-    //console.log("Cell [" + i + "," + j + "] is vacant");
+    console.log("Cell [" + i + "," + j + "] is vacant");
     cells[i][j] = 'v';
     drawDisk(i, j, VACANT_COLOR, DISK_RADIUS / 5);
   }
 
   var findVacant = function() {
+    console.log("findVacant called");
     var active = Players.findOne({active: true});
+    /*
     if (typeof active == 'undefined')
       return;
-    active = active.id;
+    */
+    active = (active && active.id) || 1;
     var cur = active == 1 ? '1' : '2';
     var other = active == 1 ? '2' : '1';
     var cnt = 0;
     for (var i = 0; i < N; ++i) {
       for (var j = 0; j < N; ++j) {
         if (cells[i][j] == cur) {
+          console.log("same color in [" + i + "," + j + "]");
           for (var k = 0; k < adj.length; ++k) {
             var dir = adj[k];
             var ni = i + dir[0];
@@ -171,6 +175,7 @@ if (Meteor.isClient) {
       }
     }
     if (cnt == 0) {
+      console.log("No vacant places");
       var first = Players.findOne({id: 1});
       var second = Players.findOne({id: 2});
       Players.update({_id: first._id}, {$set: {active: false}});
