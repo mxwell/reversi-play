@@ -1,0 +1,22 @@
+<head>
+  <title>reversi</title>
+</head>
+
+<body>
+  {{> board}}
+</body>
+
+<template name="board">
+  <canvas id="canv">Update browser!</canvas>
+  <br />
+  <div id="status">
+  	<div id="first" class={{game_status.first.css}}>
+  		Dark side: {{game_status.first.score}}
+  	</div>
+  	<div id="second" class={{game_status.second.css}}>
+  		Light side: {{game_status.second.score}}
+  	</div>
+  </div>
+  <br />
+  <input type="button" id="reset_button" value="reset" />
+</template>
