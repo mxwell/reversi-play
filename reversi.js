@@ -5,6 +5,7 @@
   - darkSide : Boolean
 */
 
+Players = new Meteor.Collection("players");
 Disks = new Meteor.Collection("disks");
 var CELL_SIZE = 33; /* including border at one side */
 var CELL_BORDER = 3;
@@ -27,7 +28,6 @@ var adj = [
 
 if (Meteor.isClient) {
   Meteor.subscribe("cells");
-  var isFirst = true;
   var cells = new Array(N);
   for (var i = 0; i < N; ++i)
     cells[i] = new Array(N);
@@ -85,6 +85,44 @@ if (Meteor.isClient) {
       return;
     }
     Disks.insert({x: xi, y: yi, darkSide: isDarkSide});
+    var cur = isDarkSide ? '1' : '2';
+    var other = isDarkSide ? '2' : '1';
+    for (var k = 0; k < adj.length; ++k) {
+      var dir = adj[k];
+      var nx = xi + dir[0];
+      var ny = yi + dir[1];
+      if (validCoordinates(nx, ny) && cells[nx][ny] == other) {
+        console.log("found interesting: " + nx + "," + ny);
+        for (var t = 0; t < N; ++t) {
+          nx += dir[0];
+          ny += dir[1];
+          if (!validCoordinates(nx, ny))
+            break;
+          if (cells[nx][ny] == other)
+            continue;
+          if (cells[nx][ny] == cur) {
+            /* ok, flip'em */
+            console.log("and found our color: " + nx + "," + ny);
+            nx -= dir[0];
+            ny -= dir[1];
+            while (!(nx == xi && ny == yi)) {
+              console.log("update in [" + nx + "," + ny + "]");
+              //Disks.remove(Disks.findOne({x: nx, y: ny})._id);
+              //Disks.insert({x: nx, y: ny, darkSide: isDarkSide});
+              Disks.update({_id: Disks.findOne({x: nx, y: ny})._id},
+                {$set: {darkSide: isDarkSide}});
+              nx -= dir[0];
+              ny -= dir[1];
+            }
+          }
+          break;
+        }
+      }
+    }
+    var first = Players.findOne({id: 1});
+    var second = Players.findOne({id: 2});
+    Players.update({_id: first._id}, {$set: {active: !isDarkSide}});
+    Players.update({_id: second._id}, {$set: {active: isDarkSide}});
   }
 
   var validCoordinates = function (i, j) {
@@ -92,13 +130,19 @@ if (Meteor.isClient) {
   }
 
   var markVacant = function (i, j) {
-    console.log("Cell [" + i + "," + j + "] is vacant");
+    //console.log("Cell [" + i + "," + j + "] is vacant");
     cells[i][j] = 'v';
     drawDisk(i, j, VACANT_COLOR, DISK_RADIUS / 5);
   }
 
-  var findVacant = function(cur) {
-    var other = cur == '1' ? '2' : '1';
+  var findVacant = function() {
+    var active = Players.findOne({active: true});
+    if (typeof active == 'undefined')
+      return;
+    active = active.id;
+    var cur = active == 1 ? '1' : '2';
+    var other = active == 1 ? '2' : '1';
+    var cnt = 0;
     for (var i = 0; i < N; ++i) {
       for (var j = 0; j < N; ++j) {
         if (cells[i][j] == cur) {
@@ -118,12 +162,19 @@ if (Meteor.isClient) {
                   break;
                 /* Yay! Vacant cell! */
                 markVacant(ni, nj);
+                ++cnt;
                 break;
               }
             }
           }
         }
       }
+    }
+    if (cnt == 0) {
+      var first = Players.findOne({id: 1});
+      var second = Players.findOne({id: 2});
+      Players.update({_id: first._id}, {$set: {active: false}});
+      Players.update({_id: second._id}, {$set: {active: false}});
     }
   }
 
@@ -146,23 +197,38 @@ if (Meteor.isClient) {
         return;
       }
       console.log("hit cell " + xId + "," + yId);
-      addDisk(xId, yId, isFirst);
-      isFirst = !isFirst;
+      addDisk(xId, yId, Players.findOne({id: 1}).active);
     }),
     'click #reset_button' : (function (event) {
       console.log("Reset button clicked");
-      while (Disks.find().count() > 0)
+      while (Disks.find().count() > 0) {
         Disks.remove({_id: Disks.find().fetch()[0]._id});
+      }
+      addInitial();
     })
   });
 
   var addInitial = function() {
+    while (Players.find().count() > 0) {
+      var first = Players.findOne();
+      Players.remove(first._id);
+    }
+    Players.insert({id: 1, active: true});
+    Players.insert({id: 2, active: false});
+    while (Disks.find().count() > 0) {
+        Disks.remove({_id: Disks.findOne()._id});
+      }
     var rg = Math.floor(N / 2);
     var lf = rg - 1;
+    console.log("respawning.1");
     Disks.insert({x: lf, y: lf, darkSide: true});
+    console.log("respawning.1.2");
     Disks.insert({x: rg, y: rg, darkSide: true});
+    console.log("respawning.1.2.3");
     Disks.insert({x: lf, y: rg, darkSide: false});
+    console.log("respawning.1.2.3.4");
     Disks.insert({x: rg, y: lf, darkSide: false});
+    console.log("respawning.1.2.3.4: " + Disks.find().count() + " disk(s)");
   }
 
   Template.board.rendered = function () {
@@ -174,10 +240,10 @@ if (Meteor.isClient) {
         drawGrid();
         var disks = Disks.find();
         console.log(disks.count() + " disk(s)");
-        if (disks.count() == 0) {
-          addInitial();
-        }
         var dark = 0, light = 0;
+        for (var i = 0; i < N; ++i)
+          for (var j = 0; j < N; ++j)
+            cells[i][j] = '0';
         disks.forEach(function(disk) {
           drawDisk(disk.x, disk.y,
             disk.darkSide ? DISK_DARK_SIDE : DISK_LIGHT_SIDE);
@@ -187,12 +253,17 @@ if (Meteor.isClient) {
           else
             ++light;
         });
-        findVacant(dark <= light ? '1' : '2');
+        findVacant();
       });
     }
   };
 
   Template.board.game_status = function() {
+    var first = Players.findOne({id: 1})
+    var second = Players.findOne({id: 2})
+    if (typeof first == 'undefined' || typeof second == 'undefined') {
+      return;
+    }
     var first_cnt = Disks.find({darkSide: true}).count();
     var second_cnt = Disks.find({darkSide: false}).count();
     var result = {
@@ -203,13 +274,20 @@ if (Meteor.isClient) {
         score: second_cnt
       },
     };
-    isFirst = first_cnt <= second_cnt;
-    if (isFirst) {
+    result.first.css = "wait_move";
+    result.second.css = "wait_move";
+    if (Players.findOne({id: 1}).active) {
       result.first.css = "do_move";
-      result.second.css = "wait_move";
-    } else {
-      result.first.css = "wait_move";
+    } else if (Players.findOne({id: 2}).active) {
       result.second.css = "do_move";
+    } else {
+      if (first_cnt == second_cnt) {
+        result.game_result = "Draw";
+      } else if(first_cnt > second_cnt) {
+        result.game_result = "Dark side won, Luke!";
+      } else {
+        result.game_result = "Light side won, Luke!";
+      }
     }
     return result;
   }
