@@ -2,7 +2,7 @@
   Cell entity:
   - x : Integer
   - y : Integer
-  - darkSide : Boolean
+  - side : Integer (1 or 2)
 */
 
 Players = new Meteor.Collection("players");
@@ -74,7 +74,7 @@ if (Meteor.isClient) {
     ctx.stroke();
   }
 
-  var addDisk = function (xi, yi, isDarkSide) {
+  var addDisk = function (xi, yi, player) {
     if (cells[xi][yi] != 'v') {
       console.log("Cell isn't available");
       return;
@@ -84,9 +84,9 @@ if (Meteor.isClient) {
       console.log("there is a disk already in cell [" + xi + "," + yi + "]");
       return;
     }
-    Disks.insert({x: xi, y: yi, darkSide: isDarkSide});
-    var cur = isDarkSide ? '1' : '2';
-    var other = isDarkSide ? '2' : '1';
+    Disks.insert({x: xi, y: yi, side: player});
+    var cur = player == 1 ? '1' : '2';
+    var other = player == 1 ? '2' : '1';
     for (var k = 0; k < adj.length; ++k) {
       var dir = adj[k];
       var nx = xi + dir[0];
@@ -110,7 +110,7 @@ if (Meteor.isClient) {
               //Disks.remove(Disks.findOne({x: nx, y: ny})._id);
               //Disks.insert({x: nx, y: ny, darkSide: isDarkSide});
               Disks.update({_id: Disks.findOne({x: nx, y: ny})._id},
-                {$set: {darkSide: isDarkSide}});
+                {$set: {side: player}});
               nx -= dir[0];
               ny -= dir[1];
             }
@@ -121,8 +121,8 @@ if (Meteor.isClient) {
     }
     var first = Players.findOne({id: 1});
     var second = Players.findOne({id: 2});
-    Players.update({_id: first._id}, {$set: {active: !isDarkSide}});
-    Players.update({_id: second._id}, {$set: {active: isDarkSide}});
+    Players.update({_id: first._id}, {$set: {active: player != 1}});
+    Players.update({_id: second._id}, {$set: {active: player != 2}});
   }
 
   var validCoordinates = function (i, j) {
@@ -202,7 +202,7 @@ if (Meteor.isClient) {
         return;
       }
       console.log("hit cell " + xId + "," + yId);
-      addDisk(xId, yId, Players.findOne({id: 1}).active);
+      addDisk(xId, yId, Players.findOne({active: true}).id);
     }),
     'click #reset_button' : (function (event) {
       console.log("Reset button clicked");
@@ -226,13 +226,13 @@ if (Meteor.isClient) {
     var rg = Math.floor(N / 2);
     var lf = rg - 1;
     console.log("respawning.1");
-    Disks.insert({x: lf, y: lf, darkSide: true});
+    Disks.insert({x: lf, y: lf, side: 1});
     console.log("respawning.1.2");
-    Disks.insert({x: rg, y: rg, darkSide: true});
+    Disks.insert({x: rg, y: rg, side : 1});
     console.log("respawning.1.2.3");
-    Disks.insert({x: lf, y: rg, darkSide: false});
+    Disks.insert({x: lf, y: rg, side: 2});
     console.log("respawning.1.2.3.4");
-    Disks.insert({x: rg, y: lf, darkSide: false});
+    Disks.insert({x: rg, y: lf, side: 2});
     console.log("respawning.1.2.3.4: " + Disks.find().count() + " disk(s)");
   }
 
@@ -251,9 +251,9 @@ if (Meteor.isClient) {
             cells[i][j] = '0';
         disks.forEach(function(disk) {
           drawDisk(disk.x, disk.y,
-            disk.darkSide ? DISK_DARK_SIDE : DISK_LIGHT_SIDE);
-          cells[disk.x][disk.y] = disk.darkSide ? '1' : '2';
-          if (disk.darkSide)
+            disk.side == 1 ? DISK_DARK_SIDE : DISK_LIGHT_SIDE);
+          cells[disk.x][disk.y] = disk.side == 1 ? '1' : '2';
+          if (disk.side == 1)
             ++dark;
           else
             ++light;
@@ -269,8 +269,8 @@ if (Meteor.isClient) {
     if (typeof first == 'undefined' || typeof second == 'undefined') {
       return;
     }
-    var first_cnt = Disks.find({darkSide: true}).count();
-    var second_cnt = Disks.find({darkSide: false}).count();
+    var first_cnt = Disks.find({side: 1}).count();
+    var second_cnt = Disks.find({side: 2}).count();
     var result = {
       first: {
         score: first_cnt
