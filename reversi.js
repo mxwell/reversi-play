@@ -29,6 +29,7 @@ var CELL_IS_VACANT = 3;
 
 if (Meteor.isClient) {
     Meteor.subscribe("disks");
+    Meteor.subscribe("players");
     var cells = new Array(N);
     for (var i = 0; i < N; ++i)
         cells[i] = new Array(N);
@@ -137,13 +138,13 @@ if (Meteor.isClient) {
 
     var findVacant = function() {
         console.log("findVacant called");
-        var active = Players.findOne({active: true});
-        if (typeof active === 'undefined') {
+        var actives = Players.findOne({active: true});
+        if (typeof actives === 'undefined') {
             console.log("no active players");
             return;
         }
         var player = 1;
-        if (typeof active !== 'undefined' && active.id === 2)
+        if (typeof actives !== 'undefined' && actives.id === 2)
             player = 2;
         var other = 3 - player;
         var cnt = 0;
@@ -175,16 +176,21 @@ if (Meteor.isClient) {
                     }
         if (cnt === 0) {
             console.log("No vacant places");
-            var first = Players.findOne({id: 1});
-            var second = Players.findOne({id: 2});
-            Players.update({_id: first._id}, {$set: {active: false}});
-            Players.update({_id: second._id}, {$set: {active: false}});
+            if (typeof actives !== 'undefined')
+                Players.update({_id: actives._id}, {$set: {active: false}});
         }
+    }
+
+    var game_is_running = function () {
+        return Players.find({active: true}).count() === 1 &&
+               Players.find({active: false}).count() === 1;
     }
 
     Template.board.events({
         'click #canv' : (function (event) {
             console.log("Canvas clicked");
+            if (!game_is_running())
+                return;
             var canv = $('#canv')[0];
             var canvOffsetX = canv.offsetLeft;
             var canvOffsetY = canv.offsetTop;
@@ -237,8 +243,8 @@ if (Meteor.isClient) {
 
     Template.board.rendered = function () {
         var self = this;
-        if (! self.handle) {
-            self.handle = Deps.autorun(function() {
+        if (!self.handle) {
+            self.handle = Deps.autorun(function () {
                 console.log("rendered called");
                 drawGrid();
                 var disks = Disks.find();
@@ -257,13 +263,11 @@ if (Meteor.isClient) {
         }
     };
 
-    Template.board.game_status = function() {
-        console.log("game_status");
-        var first = Players.findOne({id: 1})
-        var second = Players.findOne({id: 2})
-        if (typeof first === 'undefined' || typeof second === 'undefined') {
+    var calc_game_status = function () {
+        var player1 = Players.findOne({id: 1})
+        var player2 = Players.findOne({id: 2})
+        if (typeof player1 === 'undefined' || typeof player2 === 'undefined')
             return;
-        }
         var first_cnt = Disks.find({side: 1}).count();
         var second_cnt = Disks.find({side: 2}).count();
         var result = {
@@ -276,9 +280,9 @@ if (Meteor.isClient) {
         };
         result.first.css = "wait_move";
         result.second.css = "wait_move";
-        if (Players.findOne({id: 1}).active) {
+        if (player1.active) {
             result.first.css = "do_move";
-        } else if (Players.findOne({id: 2}).active) {
+        } else if (player2.active) {
             result.second.css = "do_move";
         } else {
             if (first_cnt === second_cnt) {
@@ -291,6 +295,32 @@ if (Meteor.isClient) {
         }
         return result;
     }
+
+    Template.game_status.rendered = function () {
+        var self = this;
+        if (!self.handle) {
+            self.handle = Deps.autorun(function () {
+                console.log("game_status rendered called");
+                var stat = calc_game_status();
+                if (typeof stat === 'undefined')
+                    return;
+                console.log("stat calculated");
+                var status = "<div id=\"first\" class=\"" + stat.first.css + "\">\n";
+                console.log("status = " + status);
+                status += "Dark side: " + stat.first.score + "\n";
+                status += "</div>\n";
+                status += "<div id=\"second\" class=\"" + stat.second.css + "\">\n";
+                status += "Light side: " + stat.second.score + "\n";
+                status += "</div>\n";
+                console.log("status = " + status);
+                var html = "<div id=\"status\">\n" + status + "</div><br />\n" +
+                    "<div style=\"clear:both\">" +
+                    stat.game_result + "\n</div>\n";
+                console.log("html = " + html);
+                $('#game_info').html(html);
+            });
+        }
+    };
 }
 
 if (Meteor.isServer) {
