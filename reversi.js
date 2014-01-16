@@ -12,7 +12,7 @@ var CELL_BORDER = 3;
 var CELL_CENTER_OFFSET = CELL_BORDER + CELL_SIZE / 2;
 var DISK_RADIUS = CELL_SIZE * 0.375;
 var DISK_BORDER = 2;
-var N = 4;
+var N = 5;
 var GRID_SIZE = (CELL_SIZE) * N + CELL_BORDER;
 var BG_COLOR = '#00CC66'; /* nice green */
 var GRID_COLOR = '#003366'; /* dark blue */
@@ -25,7 +25,8 @@ var adj = [
     [0, -1], [0, 1],
     [1, -1], [1, 0], [1, 1]
 ];
-var CELL_IS_VACANT = 3;
+var FREE_CELL   = 0;
+var VACANT_CELL = 3;
 
 if (Meteor.isClient) {
     Meteor.subscribe("disks");
@@ -79,7 +80,7 @@ if (Meteor.isClient) {
 
     var addDisk = function (xi, yi, player) {
         console.log("addDisk");
-        if (cells[xi][yi] !== CELL_IS_VACANT) {
+        if (cells[xi][yi] !== VACANT_CELL) {
             console.log("Cell isn't available");
             return;
         }
@@ -94,12 +95,12 @@ if (Meteor.isClient) {
             var dir = adj[k];
             var nx = xi + dir[0];
             var ny = yi + dir[1];
-            if (validCoordinates(nx, ny) && cells[nx][ny] === other) {
+            if (cell_is_valid(nx, ny) && cells[nx][ny] === other) {
                 console.log("found interesting: " + nx + "," + ny);
                 for (var t = 0; t < N; ++t) {
                     nx += dir[0];
                     ny += dir[1];
-                    if (!validCoordinates(nx, ny))
+                    if (!cell_is_valid(nx, ny))
                         break;
                     if (cells[nx][ny] === other)
                         continue;
@@ -126,58 +127,57 @@ if (Meteor.isClient) {
         Players.update({_id: second._id}, {$set: {active: player != 2}});
     }
 
-    var validCoordinates = function (i, j) {
+    var cell_is_valid = function (i, j) {
         return 0 <= i && i < N && 0 <= j && j < N;
     }
 
-    var markVacant = function (i, j) {
+    var mark_as_vacant = function (i, j) {
         console.log("Cell [" + i + "," + j + "] is vacant");
-        cells[i][j] = CELL_IS_VACANT;
+        cells[i][j] = VACANT_CELL;
         drawDisk(i, j, VACANT_COLOR, DISK_RADIUS / 5);
     }
 
-    var findVacant = function() {
-        console.log("findVacant called");
-        var actives = Players.findOne({active: true});
-        if (typeof actives === 'undefined') {
-            console.log("no active players");
-            return;
-        }
-        var player = 1;
-        if (typeof actives !== 'undefined' && actives.id === 2)
-            player = 2;
+    var try_find_vacant = function (player) {
         var other = 3 - player;
         var cnt = 0;
-        for (var i = 0; i < N; ++i)
-            for (var j = 0; j < N; ++j)
-                if (cells[i][j] === player)
+        for (var x = 0; x < N; ++x)
+            for (var y = 0; y < N; ++y)
+                if (cells[x][y] === player)
                     for (var k = 0; k < adj.length; ++k) {
-                        var dir = adj[k];
-                        var ni = i + dir[0];
-                        var nj = j + dir[1];
-                        if (validCoordinates(ni, nj) && cells[ni][nj] === other) {
-                            for (var t = 0; t < N; ++t) {
-                                ni += dir[0];
-                                nj += dir[1];
-                                if (!validCoordinates(ni, nj))
-                                    break;
-                                if (cells[ni][nj] === other)
-                                    continue;
-                                if (cells[ni][nj] === player)
-                                    break;
-                                /* Yay! Vacant cell! */
-                                if (cells[ni][nj] !== CELL_IS_VACANT) {
-                                    markVacant(ni, nj);
-                                    ++cnt;
-                                }
-                                break;
-                            }
+                        var dx = adj[k][0],
+                            dy = adj[k][1];
+                        var u = x + dx;
+                        var v = y + dy;
+                        var len = 0;
+                        while (cell_is_valid(u, v) && cells[u][v] === other) {
+                            u += dx;
+                            v += dy;
+                            ++len;
+                        }
+                        if (len > 0 && cell_is_valid(u, v) && cells[u][v] === FREE_CELL) {
+                            mark_as_vacant(u, v);
+                            ++cnt;
                         }
                     }
-        if (cnt === 0) {
-            console.log("No vacant places");
-            if (typeof actives !== 'undefined')
-                Players.update({_id: actives._id}, {$set: {active: false}});
+        return cnt;
+    };
+
+    /* make sure game is running before call */
+    var find_vacant = function() {
+        console.log("find_vacant called");
+        var player = Players.findOne({active: true}).id;
+        if (try_find_vacant(player) === 0) {
+            /* TODO: extract to Meteor.method */
+            var first = Players.findOne({id: 1});
+            var second = Players.findOne({id: 2});
+            Players.update({_id: first._id}, {$set: {active: player !== 1}});
+            Players.update({_id: second._id}, {$set: {active: player !== 2}});
+            player = 3 - player;
+            if (try_find_vacant(player) === 0) {
+                console.log("vacant places not found for both players");
+                Players.update({_id: Players.findOne({active: true})._id},
+                    {$set: {active: false}})
+            }
         }
     }
 
@@ -227,13 +227,14 @@ if (Meteor.isClient) {
                 console.log(disks.count() + " disk(s)");
                 for (var i = 0; i < N; ++i)
                     for (var j = 0; j < N; ++j)
-                        cells[i][j] = 0;
+                        cells[i][j] = FREE_CELL;
                 disks.forEach(function(disk) {
                     drawDisk(disk.x, disk.y,
                         disk.side === 1 ? DISK_DARK_SIDE : DISK_LIGHT_SIDE);
                     cells[disk.x][disk.y] = disk.side;
                 });
-                findVacant();
+                if (game_is_running())
+                    find_vacant();
                 console.log("rendered: ok");
             });
         }
