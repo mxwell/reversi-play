@@ -213,33 +213,9 @@ if (Meteor.isClient) {
             console.log("Reset button clicked");
             while (Disks.find().count() > 0)
                 Disks.remove({_id: Disks.find().fetch()[0]._id});
-            addInitial();
+            Meteor.call('respawn');
         })
     });
-
-    var addInitial = function() {
-        console.log("addInitial");
-        while (Players.find().count() > 0) {
-            var first = Players.findOne();
-            Players.remove(first._id);
-        }
-        Players.insert({id: 1, active: true});
-        Players.insert({id: 2, active: false});
-        while (Disks.find().count() > 0) {
-            Disks.remove({_id: Disks.findOne()._id});
-        }
-        var rg = Math.floor(N / 2);
-        var lf = rg - 1;
-        console.log("respawning.1");
-        Disks.insert({x: lf, y: lf, side: 1});
-        console.log("respawning.1.2");
-        Disks.insert({x: rg, y: rg, side : 1});
-        console.log("respawning.1.2.3");
-        Disks.insert({x: lf, y: rg, side: 2});
-        console.log("respawning.1.2.3.4");
-        Disks.insert({x: rg, y: lf, side: 2});
-        console.log("respawning.1.2.3.4: " + Disks.find().count() + " disk(s)");
-    }
 
     Template.board.rendered = function () {
         var self = this;
@@ -293,6 +269,8 @@ if (Meteor.isClient) {
                 result.game_result = "Light side won, Luke!";
             }
         }
+        if (typeof result.game_result === 'undefined')
+            result.game_result = "";
         return result;
     }
 
@@ -304,15 +282,12 @@ if (Meteor.isClient) {
                 var stat = calc_game_status();
                 if (typeof stat === 'undefined')
                     return;
-                console.log("stat calculated");
                 var status = "<div id=\"first\" class=\"" + stat.first.css + "\">\n";
-                console.log("status = " + status);
                 status += "Dark side: " + stat.first.score + "\n";
                 status += "</div>\n";
                 status += "<div id=\"second\" class=\"" + stat.second.css + "\">\n";
                 status += "Light side: " + stat.second.score + "\n";
                 status += "</div>\n";
-                console.log("status = " + status);
                 var html = "<div id=\"status\">\n" + status + "</div><br />\n" +
                     "<div style=\"clear:both\">" +
                     stat.game_result + "\n</div>\n";
@@ -337,5 +312,30 @@ if (Meteor.isServer) {
                 return true;
             }
         });
+        Players.allow({
+            insert: function (userId, disk) {
+                return true;
+            },
+            update: function (userId, disk, fieldNames, modifier) {
+                return true;
+            },
+            remove: function (userId, disk) {
+                return true;
+            }
+        });
+    });
+    Meteor.methods({
+        respawn : function () {
+            Disks.remove({});
+            var rg = Math.floor(N / 2);
+            var lf = rg - 1;
+            Disks.insert({x: lf, y: lf, side: 1});
+            Disks.insert({x: rg, y: rg, side: 1});
+            Disks.insert({x: lf, y: rg, side: 2});
+            Disks.insert({x: rg, y: lf, side: 2});
+            Players.remove({});
+            Players.insert({id: 1, active: true});
+            Players.insert({id: 2, active: false});
+        }
     });
 }
