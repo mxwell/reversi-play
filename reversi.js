@@ -12,7 +12,7 @@ var CELL_BORDER = 3;
 var CELL_CENTER_OFFSET = CELL_BORDER + CELL_SIZE / 2;
 var DISK_RADIUS = CELL_SIZE * 0.375;
 var DISK_BORDER = 2;
-var N = 5;
+var N = 4;
 var GRID_SIZE = (CELL_SIZE) * N + CELL_BORDER;
 var BG_COLOR = '#00CC66'; /* nice green */
 var GRID_COLOR = '#003366'; /* dark blue */
@@ -29,8 +29,6 @@ var FREE_CELL   = 0;
 var VACANT_CELL = 3;
 
 if (Meteor.isClient) {
-    Meteor.subscribe("disks");
-    Meteor.subscribe("players");
     var cells = new Array(N);
     for (var i = 0; i < N; ++i)
         cells[i] = new Array(N);
@@ -78,57 +76,39 @@ if (Meteor.isClient) {
         ctx.stroke();
     }
 
-    var addDisk = function (xi, yi, player) {
+    var cell_is_valid = function (i, j) {
+        return 0 <= i && i < N && 0 <= j && j < N;
+    }
+
+    var addDisk = function (x, y, player) {
         console.log("addDisk");
-        if (cells[xi][yi] !== VACANT_CELL) {
+        if (cells[x][y] !== VACANT_CELL) {
             console.log("Cell isn't available");
             return;
         }
-        var prev = Disks.findOne({x: xi, y: yi});
-        if (prev) {
-            console.log("there is a disk already in cell [" + xi + "," + yi + "]");
-            return;
-        }
-        Disks.insert({x: xi, y: yi, side: player});
+        Disks.insert({x: x, y: y, side: player});
         var other = 3 - player;
         for (var k = 0; k < adj.length; ++k) {
-            var dir = adj[k];
-            var nx = xi + dir[0];
-            var ny = yi + dir[1];
-            if (cell_is_valid(nx, ny) && cells[nx][ny] === other) {
-                console.log("found interesting: " + nx + "," + ny);
-                for (var t = 0; t < N; ++t) {
-                    nx += dir[0];
-                    ny += dir[1];
-                    if (!cell_is_valid(nx, ny))
-                        break;
-                    if (cells[nx][ny] === other)
-                        continue;
-                    if (cells[nx][ny] === player) {
-                        /* ok, flip'em */
-                        console.log("and found our color: " + nx + "," + ny);
-                        nx -= dir[0];
-                        ny -= dir[1];
-                        while (!(nx === xi && ny === yi)) {
-                            console.log("update in [" + nx + "," + ny + "]");
-                            Disks.update({_id: Disks.findOne({x: nx, y: ny})._id},
-                                {$set: {side: player}});
-                            nx -= dir[0];
-                            ny -= dir[1];
-                        }
-                    }
-                    break;
+            var dx = adj[k][0],
+                dy = adj[k][1];
+            var u = x + dx;
+            var v = y + dy;
+            var len = 0;
+            while (cell_is_valid(u, v) && cells[u][v] === other) {
+                u += dx;
+                v += dy;
+                ++len;
+            }
+            if (len > 0 && cell_is_valid(u, v) && cells[u][v] === player) {
+                for (; len > 0; --len) {
+                    u -= dx;
+                    v -= dy;
+                    Disks.update({_id: Disks.findOne({x: u, y: v})._id},
+                        {$set: {side: player}});
                 }
             }
         }
-        var first = Players.findOne({id: 1});
-        var second = Players.findOne({id: 2});
-        Players.update({_id: first._id}, {$set: {active: player != 1}});
-        Players.update({_id: second._id}, {$set: {active: player != 2}});
-    }
-
-    var cell_is_valid = function (i, j) {
-        return 0 <= i && i < N && 0 <= j && j < N;
+        next_move();
     }
 
     var mark_as_vacant = function (i, j) {
@@ -167,23 +147,55 @@ if (Meteor.isClient) {
         console.log("find_vacant called");
         var player = Players.findOne({active: true}).id;
         if (try_find_vacant(player) === 0) {
-            /* TODO: extract to Meteor.method */
-            var first = Players.findOne({id: 1});
-            var second = Players.findOne({id: 2});
-            Players.update({_id: first._id}, {$set: {active: player !== 1}});
-            Players.update({_id: second._id}, {$set: {active: player !== 2}});
-            player = 3 - player;
+            player = next_move();
+            if (typeof player === 'undefined')
+                return;
             if (try_find_vacant(player) === 0) {
                 console.log("vacant places not found for both players");
-                Players.update({_id: Players.findOne({active: true})._id},
-                    {$set: {active: false}})
+                finish_game();
             }
         }
     }
 
     var game_is_running = function () {
         return Players.find({active: true}).count() === 1 &&
-               Players.find({active: false}).count() === 1;
+               Players.find({active: false}).count() === 1 &&
+                Disks.find({}).count() >= 4;
+    }
+
+    var respawn = function () {
+        var disks = Disks.find().count();
+        for (; disks > 0; --disks)
+            Disks.remove({_id: Disks.findOne({})._id});
+        var players = Players.find({}).count();
+        for (; players > 0; --players)
+            Players.remove({_id: Players.findOne({})._id});
+        var rg = Math.floor(N / 2);
+        var lf = rg - 1;
+        Disks.insert({x: lf, y: lf, side: 1});
+        Disks.insert({x: rg, y: rg, side: 1});
+        Disks.insert({x: lf, y: rg, side: 2});
+        Disks.insert({x: rg, y: lf, side: 2});
+        Players.insert({id: 1, active: true});
+        Players.insert({id: 2, active: false});
+    }
+
+    var next_move = function () {
+        var active = Players.findOne({active: true});
+        var inactive = Players.findOne({active: false});
+        if (typeof active !== 'undefined' && typeof inactive !== 'undefined') {
+            Players.update({_id: inactive._id}, {$set: {active: true}});
+            Players.update({_id: active._id}, {$set: {active: false}});
+            return inactive.id;
+        }
+        return undefined;
+    }
+
+    var finish_game = function () {
+        var active = Players.findOne({active: true});
+        var inactive = Players.findOne({active: false});
+        if (typeof active !== 'undefined' && typeof inactive !== 'undefined')
+            Players.update({_id: active._id}, {$set: {active: false}});
     }
 
     Template.board.events({
@@ -211,9 +223,7 @@ if (Meteor.isClient) {
         }),
         'click #reset_button' : (function (event) {
             console.log("Reset button clicked");
-            while (Disks.find().count() > 0)
-                Disks.remove({_id: Disks.find().fetch()[0]._id});
-            Meteor.call('respawn');
+            respawn();
         })
     });
 
@@ -221,10 +231,8 @@ if (Meteor.isClient) {
         var self = this;
         if (!self.handle) {
             self.handle = Deps.autorun(function () {
-                console.log("rendered called");
                 drawGrid();
                 var disks = Disks.find();
-                console.log(disks.count() + " disk(s)");
                 for (var i = 0; i < N; ++i)
                     for (var j = 0; j < N; ++j)
                         cells[i][j] = FREE_CELL;
@@ -235,7 +243,6 @@ if (Meteor.isClient) {
                 });
                 if (game_is_running())
                     find_vacant();
-                console.log("rendered: ok");
             });
         }
     };
@@ -302,41 +309,5 @@ if (Meteor.isClient) {
 if (Meteor.isServer) {
     Meteor.startup(function () {
         // code to run on server at startup
-        Disks.allow({
-            insert: function (userId, disk) {
-                return true;
-            },
-            update: function (userId, disk, fieldNames, modifier) {
-                return true;
-            },
-            remove: function (userId, disk) {
-                return true;
-            }
-        });
-        Players.allow({
-            insert: function (userId, disk) {
-                return true;
-            },
-            update: function (userId, disk, fieldNames, modifier) {
-                return true;
-            },
-            remove: function (userId, disk) {
-                return true;
-            }
-        });
-    });
-    Meteor.methods({
-        respawn : function () {
-            Disks.remove({});
-            var rg = Math.floor(N / 2);
-            var lf = rg - 1;
-            Disks.insert({x: lf, y: lf, side: 1});
-            Disks.insert({x: rg, y: rg, side: 1});
-            Disks.insert({x: lf, y: rg, side: 2});
-            Disks.insert({x: rg, y: lf, side: 2});
-            Players.remove({});
-            Players.insert({id: 1, active: true});
-            Players.insert({id: 2, active: false});
-        }
     });
 }
