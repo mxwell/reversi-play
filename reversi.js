@@ -11,9 +11,12 @@ var CELL_SIZE = 33; /* including border at one side */
 var CELL_BORDER = 3;
 var CELL_CENTER_OFFSET = CELL_BORDER + CELL_SIZE / 2;
 var DISK_RADIUS = CELL_SIZE * 0.375;
+var FLIP_INC = DISK_RADIUS / 5;
+var FLIP_DELAY = 100; /* ms */
 var DISK_BORDER = 2;
-var N = 4;
-var GRID_SIZE = (CELL_SIZE) * N + CELL_BORDER;
+var N = 8;
+var GRID_BORDER = 0;
+var GRID_SIZE = (CELL_SIZE) * N + CELL_BORDER + 2 * GRID_BORDER;
 var BG_COLOR = '#00CC66'; /* nice green */
 var GRID_COLOR = '#003366'; /* dark blue */
 var DISK_BORDER_COLOR = '#002E5C'; /* medium blue */
@@ -30,10 +33,185 @@ var VACANT_CELL = 3;
 
 if (Meteor.isClient) {
     var cells = new Array(N);
+    var field = undefined;
+    var flip_context = undefined;
     for (var i = 0; i < N; ++i)
         cells[i] = new Array(N);
 
+    var getField = function () {
+        console.log("typeof: " + typeof field);
+        if (typeof field === 'undefined') {
+            console.log("creating SVG-based field");
+            var svg = d3.select("#grid").append("svg")
+                    .attr("width", GRID_SIZE)
+                    .attr("height", GRID_SIZE);
+            var bg = svg.append("rect")
+                        .attr("x", 0)
+                        .attr("y", 0)
+                        .attr("width", GRID_SIZE)
+                        .attr("height", GRID_SIZE)
+                        .attr("fill", BG_COLOR);
+            var borders = []
+            var range = _.range(N + 1);
+            var borders = _.map(range, function(i) {
+                return GRID_BORDER + i * CELL_SIZE; 
+            });
+            var horizontalGroup = svg.append("g");
+            var verticalGroup = svg.append("g");
+            var horizontals = horizontalGroup.selectAll("line")
+                            .data(borders)
+                            .enter()
+                            .append("line");
+            var horizontalsAttrs = horizontals
+                                    .attr("x1", GRID_BORDER)
+                                    .attr("y1", function(d) { return d; })
+                                    .attr("x2", GRID_BORDER + N * CELL_SIZE)
+                                    .attr("y2", function(d) { return d; })
+                                    .attr("stroke-width", CELL_BORDER)
+                                    .attr("stroke", GRID_COLOR);
+            var verticals = verticalGroup.selectAll("line")
+                            .data(borders)
+                            .enter()
+                            .append("line");
+            var verticalsAttrs = verticals
+                                    .attr("x1", function(d) { return d; })
+                                    .attr("y1", GRID_BORDER)
+                                    .attr("x2", function(d) { return d; })
+                                    .attr("y2", GRID_BORDER + N * CELL_SIZE)
+                                    .attr("stroke-width", CELL_BORDER)
+                                    .attr("stroke", GRID_COLOR);
+            var darkGroup = svg.append("g").attr("class", "dark");
+            var lightGroup = svg.append("g").attr("class", "light");
+            var vacantGroup = svg.append("g").attr("class", "vacant");
+            field = {
+                "svg": svg,
+                "bg": bg,
+                "horizontals": horizontals,
+                "verticals": verticals,
+                "dark": darkGroup,
+                "light": lightGroup,
+                "vacant": vacantGroup
+            };
+        }
+        return field;
+    }
+
+    var drawGridOnSvg = function () {
+        return getField();
+    }
+
+    var cellIdToCoordinate = function (cellId) {
+        return GRID_BORDER + cellId * CELL_SIZE + CELL_CENTER_OFFSET - 2;
+    }
+
+    var clearFlipped = function () {
+        var flipped = _.map(Disks.find({flip: true}).fetch(), function(disk) {
+            return disk._id;
+        });
+        console.log("flipped: " + flipped.length);
+        _.map(flipped, function(id) {
+            Disks.update({_id: id}, {$set: {flip: false}});
+        });
+    }
+
+    var drawDisksOnSvg = function () {
+        console.log("drawDisksOnSvg called");
+        var darkDisks = Disks.find({$and: [{side: 1}, {flip: {$not: true}}]});
+        var lightDisks = Disks.find({$and: [{side: 2}, {flip: {$not: true}}]});
+        var fd = getField();
+        fd.dark.selectAll("circle").remove();
+        fd.light.selectAll("circle").remove();
+        fd.dark
+            .selectAll("circle")
+            .data(darkDisks.fetch())
+            .enter()
+            .append("circle")
+            .attr("cx", function(d) { return cellIdToCoordinate(d.x); })
+            .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
+            .attr("r", DISK_RADIUS)
+            .style("fill", DISK_DARK_SIDE)
+            .style("stroke", DISK_BORDER_COLOR)
+            .style("stroke-width", DISK_BORDER);
+        fd.light
+            .selectAll("circle")
+            .data(lightDisks.fetch())
+            .enter()
+            .append("circle")
+            .attr("cx", function(d) { return cellIdToCoordinate(d.x); })
+            .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
+            .attr("r", DISK_RADIUS)
+            .style("fill", DISK_LIGHT_SIDE)
+            .style("stroke", DISK_BORDER_COLOR)
+            .style("stroke-width", DISK_BORDER);
+        fd.vacant
+            .selectAll("circle")
+            .remove();
+        var flippingDisks = Disks.find({flip: true}).fetch();
+        if (flippingDisks.length === 0) {
+            fd
+                .vacant
+                .selectAll("ellipse")
+                .remove();
+            return;
+        }
+        var selection = fd
+            .vacant
+            .selectAll("ellipse")
+            .data(flippingDisks)
+            .enter()
+            .append("ellipse");
+        var startSide = 3 - flippingDisks[0].side;
+        drawEllipsis(selection, DISK_RADIUS, sideToColor(startSide));
+        flip_context = {
+            /* changes from -R to R */
+            "r": -DISK_RADIUS,
+            "side": startSide,
+            "selection": selection
+        };
+        setTimeout(flipHandler, FLIP_DELAY);
+    }
+
+    var sideToColor = function(side) {
+        if (side === 1)
+            return DISK_DARK_SIDE;
+        return DISK_LIGHT_SIDE;
+    }
+
+    var drawEllipsis = function (selection, smallR, color) {
+        selection
+            .attr("cx", function(d) { return cellIdToCoordinate(d.x); })
+            .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
+            .attr("rx", smallR)
+            .attr("ry", DISK_RADIUS)
+            .style("fill", color)
+            .style("stroke", DISK_BORDER_COLOR)
+            .style("stroke-width", DISK_BORDER);
+    }
+
+    var modifyRadius = function(r) {
+        if (r < DISK_RADIUS)
+            r += FLIP_INC;
+        return Math.min(r, DISK_RADIUS);
+    }
+
+    var flipHandler = function handler(ctx) {
+        var context = flip_context;
+        var prevR = context.r;
+        var nextR = modifyRadius(prevR);
+        if (prevR === nextR) {
+            clearFlipped();
+            return;
+        }
+        if (prevR < -1e-3 && (Math.abs(nextR) < 1e-3 || nextR > 0))
+            context.side = 3 - context.side;
+        context.r = nextR;
+        drawEllipsis(context.selection, Math.abs(context.r),
+            sideToColor(context.side));
+        setTimeout(handler, FLIP_DELAY);
+    }
+
     var drawGrid = function() {
+        drawGridOnSvg();
         var canv = $('#canv')[0];
         var ctx = canv.getContext('2d');
         if (canv.width !== GRID_SIZE || canv.height !== GRID_SIZE) {
@@ -60,7 +238,7 @@ if (Meteor.isClient) {
     }
 
     var drawDisk = function (xId, yId, color, r) {
-        console.log("drawDisk");
+        //console.log("drawDisk");
         var canv = $('#canv')[0];
         var ctx = canv.getContext('2d');
         var centerX = xId * CELL_SIZE + CELL_CENTER_OFFSET;
@@ -81,7 +259,7 @@ if (Meteor.isClient) {
     }
 
     var addDisk = function (x, y, player) {
-        console.log("addDisk");
+        //console.log("addDisk");
         if (cells[x][y] !== VACANT_CELL) {
             console.log("Cell isn't available");
             return;
@@ -104,7 +282,7 @@ if (Meteor.isClient) {
                     u -= dx;
                     v -= dy;
                     Disks.update({_id: Disks.findOne({x: u, y: v})._id},
-                        {$set: {side: player}});
+                        {$set: {side: player, flip: true}});
                 }
             }
         }
@@ -112,7 +290,7 @@ if (Meteor.isClient) {
     }
 
     var mark_as_vacant = function (i, j) {
-        console.log("Cell [" + i + "," + j + "] is vacant");
+        //console.log("Cell [" + i + "," + j + "] is vacant");
         cells[i][j] = VACANT_CELL;
         drawDisk(i, j, VACANT_COLOR, DISK_RADIUS / 5);
     }
@@ -144,7 +322,7 @@ if (Meteor.isClient) {
 
     /* make sure game is running before call */
     var find_vacant = function() {
-        console.log("find_vacant called");
+        //console.log("find_vacant called");
         var player = Players.findOne({active: true}).id;
         if (try_find_vacant(player) === 0) {
             player = next_move();
@@ -241,6 +419,7 @@ if (Meteor.isClient) {
                         disk.side === 1 ? DISK_DARK_SIDE : DISK_LIGHT_SIDE);
                     cells[disk.x][disk.y] = disk.side;
                 });
+                drawDisksOnSvg();
                 if (game_is_running())
                     find_vacant();
             });
