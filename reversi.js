@@ -12,7 +12,6 @@ var CELL_BORDER         = 2;
 var CELL_CENTER_OFFSET  = CELL_BORDER + CELL_SIZE / 2;
 var DISK_RADIUS         = CELL_SIZE * 0.375;
 var DISK_VACANT_RADIUS  = DISK_RADIUS / 5;
-var FLIP_INC            = DISK_RADIUS / 5;
 var FLIP_ANIMATE_TIME   = 500; /* ms */
 var FLIP_ANIMATE_STEPS  = 10;
 var FLIP_DELAY          = FLIP_ANIMATE_TIME / FLIP_ANIMATE_STEPS;
@@ -53,39 +52,36 @@ if (Meteor.isClient) {
                         .attr("width", GRID_SIZE)
                         .attr("height", GRID_SIZE)
                         .attr("fill", BG_COLOR);
-            var borders = []
-            var range = _.range(N + 1);
-            var borders = _.map(range, function (i) {
+            var borders = _.map(_.range(N + 1), function (i) {
                 return GRID_BORDER + i * CELL_SIZE; 
             });
-            var horizontalGroup = svg.append("g");
-            var verticalGroup = svg.append("g");
-            var horizontals = horizontalGroup.selectAll("line")
-                            .data(borders)
-                            .enter()
-                            .append("line");
             /* rightmost or bottom point of line */
             var greaterValue = GRID_BORDER + N * CELL_SIZE + CELL_BORDER / 2;
-            var horizontalsAttrs = horizontals
-                                    .attr("x1", GRID_BORDER)
-                                    .attr("y1", function(d) { return d; })
-                                    .attr("x2", greaterValue)
-                                    .attr("y2", function(d) { return d; })
-                                    .attr("stroke-width", CELL_BORDER)
-                                    .attr("stroke", GRID_COLOR);
-            var verticals = verticalGroup.selectAll("line")
+            var horizontals = svg.append("g").attr("class", "horizontals")
+                            .selectAll("line")
                             .data(borders)
                             .enter()
                             .append("line");
-            var verticalsAttrs = verticals
-                                    .attr("x1", function(d) { return d; })
-                                    .attr("y1", GRID_BORDER)
-                                    .attr("x2", function(d) { return d; })
-                                    .attr("y2", greaterValue)
-                                    .attr("stroke-width", CELL_BORDER)
-                                    .attr("stroke", GRID_COLOR);
-            var darkGroup = svg.append("g").attr("class", "dark");
-            var lightGroup = svg.append("g").attr("class", "light");
+            horizontals
+                .attr("x1", GRID_BORDER)
+                .attr("y1", function(d) { return d; })
+                .attr("x2", greaterValue)
+                .attr("y2", function(d) { return d; })
+                .attr("stroke-width", CELL_BORDER)
+                .attr("stroke", GRID_COLOR);
+            var verticals = svg.append("g").attr("class", "verticals")
+                            .selectAll("line")
+                            .data(borders)
+                            .enter()
+                            .append("line");
+            verticals
+                .attr("x1", function(d) { return d; })
+                .attr("y1", GRID_BORDER)
+                .attr("x2", function(d) { return d; })
+                .attr("y2", greaterValue)
+                .attr("stroke-width", CELL_BORDER)
+                .attr("stroke", GRID_COLOR);
+            var diskGroup = svg.append("g").attr("class", "disks");
             var flipGroup = svg.append("g").attr("class", "flip");
             var vacantGroup = svg.append("g").attr("class", "vacant");
             var flipRadii = _.map(_.range(FLIP_ANIMATE_STEPS + 1), function (i) {
@@ -97,8 +93,7 @@ if (Meteor.isClient) {
                 "bg": bg,
                 "horizontals": horizontals,
                 "verticals": verticals,
-                "dark": darkGroup,
-                "light": lightGroup,
+                "disks": diskGroup,
                 "flip": flipGroup,
                 "vacant": vacantGroup,
                 "radii": flipRadii
@@ -107,46 +102,36 @@ if (Meteor.isClient) {
         return field;
     }
 
-    var drawGridOnSvg = function () {
-        return getField();
-    }
-
     var cellIdToCoordinate = function (cellId) {
         return GRID_BORDER + cellId * CELL_SIZE + CELL_CENTER_OFFSET - 2;
     }
 
     var drawDisksOnSvg = function () {
-        var darkDisks = Disks.find({$and: [{side: 1}, {flip: {$not: true}}]});
-        var lightDisks = Disks.find({$and: [{side: 2}, {flip: {$not: true}}]});
         var fd = getField();
-        fd.dark.selectAll("circle").remove();
-        fd.light.selectAll("circle").remove();
+        fd.disks.selectAll("circle").remove();
         flipContext = undefined;
         fd.flip.selectAll("ellipse").remove();
         fd.vacant.selectAll("circle").remove();
-        fd.dark
+        var nonFlippingDisks = Disks.find({
+            $and: [
+                {$or: [ {side: 1 }, {side: 2 } ]},
+                {flip: {$not: true}}
+            ]}).fetch();
+        fd.disks
             .selectAll("circle")
-            .data(darkDisks.fetch())
+            .data(nonFlippingDisks)
             .enter()
             .append("circle")
             .attr("cx", function(d) { return cellIdToCoordinate(d.x); })
             .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
             .attr("r", DISK_RADIUS)
-            .style("fill", DISK_DARK_SIDE)
+            .style("fill", function (d) {
+                if (d.side === 1)
+                    return DISK_DARK_SIDE;
+                return DISK_LIGHT_SIDE;
+            })
             .style("stroke", DISK_BORDER_COLOR)
             .style("stroke-width", DISK_BORDER);
-        fd.light
-            .selectAll("circle")
-            .data(lightDisks.fetch())
-            .enter()
-            .append("circle")
-            .attr("cx", function(d) { return cellIdToCoordinate(d.x); })
-            .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
-            .attr("r", DISK_RADIUS)
-            .style("fill", DISK_LIGHT_SIDE)
-            .style("stroke", DISK_BORDER_COLOR)
-            .style("stroke-width", DISK_BORDER);
-        
         var flippingDisks = Disks.find({flip: true}).fetch();
         if (flippingDisks.length === 0) {
             drawVacancies();
