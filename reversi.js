@@ -6,7 +6,7 @@
 */
 
 Players = new Meteor.Collection("players");
-Disks = new Meteor.Collection("disks");
+Disks   = new Meteor.Collection("disks");
 var CELL_SIZE           = 33; /* including border at one side */
 var CELL_BORDER         = 2;
 var CELL_CENTER_OFFSET  = CELL_BORDER + CELL_SIZE / 2;
@@ -34,9 +34,9 @@ var FREE_CELL   = 0;
 var VACANT_CELL = 3;
 
 if (Meteor.isClient) {
-    var cells = new Array(N);
     var field = undefined;
     var flipContext = undefined;
+    var cells = new Array(N);
     for (var i = 0; i < N; ++i)
         cells[i] = new Array(N);
 
@@ -126,9 +126,7 @@ if (Meteor.isClient) {
             .attr("cy", function(d) { return cellIdToCoordinate(d.y); })
             .attr("r", DISK_RADIUS)
             .style("fill", function (d) {
-                if (d.side === 1)
-                    return DISK_DARK_SIDE;
-                return DISK_LIGHT_SIDE;
+                return d.side === 1 ? DISK_DARK_SIDE : DISK_LIGHT_SIDE;
             })
             .style("stroke", DISK_BORDER_COLOR)
             .style("stroke-width", DISK_BORDER);
@@ -137,7 +135,7 @@ if (Meteor.isClient) {
             drawVacancies();
             return;
         }
-        var selection = fd
+        var ellipsis = fd
             .flip
             .selectAll("ellipse")
             .data(flippingDisks)
@@ -149,16 +147,13 @@ if (Meteor.isClient) {
             "step": 0,
             "radii": fd.radii,
             "side": startSide,
-            "selection": selection,
-            "active": true,
+            "selection": ellipsis,
         };
         flipHandler();
     }
 
     var sideToColor = function(side) {
-        if (side === 1)
-            return DISK_DARK_SIDE;
-        return DISK_LIGHT_SIDE;
+        return side === 1 ? DISK_DARK_SIDE : DISK_LIGHT_SIDE;
     }
 
     var drawEllipsis = function (selection, smallR, color) {
@@ -170,12 +165,6 @@ if (Meteor.isClient) {
             .style("fill", color)
             .style("stroke", DISK_BORDER_COLOR)
             .style("stroke-width", DISK_BORDER);
-    }
-
-    var modifyRadius = function(r) {
-        if (r < DISK_RADIUS)
-            r += FLIP_INC;
-        return Math.min(r, DISK_RADIUS);
     }
 
     var clearFlipped = function () {
@@ -194,7 +183,7 @@ if (Meteor.isClient) {
         var step = context.step;
         if (step >= FLIP_ANIMATE_STEPS) {
             clearFlipped();
-            flipContext.active = false;
+            flipContext = undefined;
             return;
         }
         if (step == (FLIP_ANIMATE_STEPS - FLIP_ANIMATE_STEPS / 2))
@@ -233,14 +222,10 @@ if (Meteor.isClient) {
     var drawVacancies = function () {
         if (!gameRunning())
             return;
-        var player = Players.findOne({active: true});
-        /* game is not running? */
-        if (typeof player === 'undefined')
-            return;
-        var player = player.id;
-        console.log("player found: " + player);
+        var player = activePlayer().id;
         var vacancies = findVacancies(player);
-        console.log("found vacancies: " + vacancies.length);
+        console.log("found " + vacancies.length +
+            " vacancies for player#" + player);
         if (vacancies.length === 0) {
             player = nextMove();
             console.log("trying with another player: " + player);
@@ -271,7 +256,6 @@ if (Meteor.isClient) {
     }
 
     var addDisk = function (x, y, player) {
-        //console.log("addDisk");
         if (cells[x][y] !== VACANT_CELL) {
             console.log("Cell isn't available");
             return;
@@ -326,8 +310,8 @@ if (Meteor.isClient) {
     }
 
     var nextMove = function () {
-        var active = Players.findOne({active: true});
-        var inactive = Players.findOne({active: false});
+        var active = activePlayer();
+        var inactive = inactivePlayer();
         if (typeof active !== 'undefined' && typeof inactive !== 'undefined') {
             Players.update({_id: inactive._id}, {$set: {active: true}});
             Players.update({_id: active._id}, {$set: {active: false}});
@@ -337,20 +321,24 @@ if (Meteor.isClient) {
     }
 
     var finishGame = function () {
-        var active = Players.findOne({active: true});
-        var inactive = Players.findOne({active: false});
+        var active = activePlayer();
+        var inactive = inactivePlayer();
         if (typeof active !== 'undefined' && typeof inactive !== 'undefined')
             Players.update({_id: active._id}, {$set: {active: false}});
     }
 
-    var currentPlayer = function () {
-        return Players.findOne({active: true}).id;
+    var activePlayer = function () {
+        return Players.findOne({active: true});
+    }
+
+    var inactivePlayer = function () {
+        return Players.findOne({active: false});
     }
 
     Template.board.events({
         'click svg' : (function (event) {
             console.log("svg clicked");
-            if (typeof flipContext !== 'undefined' && flipContext.active) {
+            if (typeof flipContext !== 'undefined') {
                 console.log("ignored because animation");
                 return;
             }
@@ -358,7 +346,6 @@ if (Meteor.isClient) {
             var bRect = svg.getBoundingClientRect();
             var x = event.pageX - bRect.left - GRID_BORDER;
             var y = event.pageY - bRect.top - GRID_BORDER;
-            console.log(" in (" + x + ", " + y + ")");
             if (x <= 0 || y <= 0) {
                 console.log("miss: top or left border");
                 return;
@@ -373,7 +360,7 @@ if (Meteor.isClient) {
                 console.log("miss: rightmost or bottom border");
             }
             console.log("hit cell " + xId + "," + yId);
-            addDisk(xId, yId, currentPlayer());
+            addDisk(xId, yId, activePlayer().id);
         }),
         'click #reset_button' : (function (event) {
             console.log("Reset button clicked");
@@ -436,7 +423,6 @@ if (Meteor.isClient) {
         var self = this;
         if (!self.handle) {
             self.handle = Deps.autorun(function () {
-                console.log("game_status rendered called");
                 var stat = calc_game_status();
                 if (typeof stat === 'undefined')
                     return;
@@ -449,8 +435,8 @@ if (Meteor.isClient) {
                 var html = "<div id=\"status\">\n" + status + "</div><br />\n" +
                     "<div style=\"clear:both\">" +
                     stat.game_result + "\n</div>\n";
-                console.log("html = " + html);
                 $('#game_info').html(html);
+                console.log("game status rendered");
             });
         }
     };
