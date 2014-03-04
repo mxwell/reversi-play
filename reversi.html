@@ -3,17 +3,67 @@
 </head>
 
 <body>
-  {{> board}}
-  <br />
-  {{> game_status}}
+	<div class="container-fluid">
+		    <div class="navbar navbar-inverse">
+			    <div class="navbar-inner">
+			    <a class="brand" href="#">Reversi</a>
+			    <ul class="nav pull-right">
+			    	<li>{{loginButtons align="right"}}</li>
+			    </ul>
+			    </div>
+		    </div>
+		<div>
+		{{> board}}
+  		{{> gameStatus}}
+	</div>
 </body>
 
 <template name="board">
-  <div id="grid"></div>
-  <br />
-  <input type="button" id="reset_button" value="reset">
+	<div id="grid"></div>
 </template>
 
-<template name="game_status">
-  <div id="game_info"></div>
+<template name="gameStatus">
+	<div class="row">
+		<div class="span2 text-center">
+			{{#if status.darkMove }}
+			<div style="border: dashed 1px red; border-radius: 10px;">
+			{{else}}
+			<div style="border: dashed 1px white; border-radius: 10px;">
+			{{/if}}
+				<p class="lead">
+					{{ status.darkScore }}
+					<svg width="24" height="24">
+						<circle cx="12" cy="12" r="10" fill="black" stroke="black" stroke-width="2"/>
+					</svg>
+					
+				</p>
+				<span class="label label-inverse">
+					{{ status.darkPlayer }}
+				</span>
+			</div>
+		</div>
+		<div class="span2 text-center">
+			{{#if status.lightMove }}
+			<div style="border: dashed 1px red; border-radius: 10px;">
+			{{else}}
+			<div style="border: dashed 1px white; border-radius: 10px;">
+			{{/if}}
+				<p class="lead">
+					<svg width="24" height="24">
+						<circle cx="12" cy="12" r="10" fill="white" stroke="blue" stroke-width="2"/>
+					</svg>
+					{{ status.lightScore }}
+				</p>
+				<span class="label label-info">
+					{{ status.lightPlayer }}
+				</span>
+			</div>
+		</div>
+	</div>
+	<br />
+	<div class="row">
+		<div class="span4 text-center">
+			<button type="button" class="btn btn-danger" id="reset_button">Reset</button>
+		</div>
+	</div>
 </template>

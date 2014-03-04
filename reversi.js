@@ -32,6 +32,8 @@ var adj = [
 ];
 var FREE_CELL   = 0;
 var VACANT_CELL = 3;
+var DARK_SIDE   = 1;
+var LIGHT_SIDE  = 2;
 
 if (Meteor.isClient) {
     var field = undefined;
@@ -114,7 +116,7 @@ if (Meteor.isClient) {
         fd.vacant.selectAll("circle").remove();
         var nonFlippingDisks = Disks.find({
             $and: [
-                {$or: [ {side: 1 }, {side: 2 } ]},
+                {$or: [ {side: DARK_SIDE }, {side: LIGHT_SIDE } ]},
                 {flip: {$not: true}}
             ]}).fetch();
         fd.disks
@@ -301,10 +303,10 @@ if (Meteor.isClient) {
         flipContext = undefined;
         var rg = Math.floor(N / 2);
         var lf = rg - 1;
-        Disks.insert({x: lf, y: lf, side: 1});
-        Disks.insert({x: rg, y: rg, side: 1});
-        Disks.insert({x: lf, y: rg, side: 2});
-        Disks.insert({x: rg, y: lf, side: 2});
+        Disks.insert({x: lf, y: lf, side: DARK_SIDE});
+        Disks.insert({x: rg, y: rg, side: DARK_SIDE});
+        Disks.insert({x: lf, y: rg, side: LIGHT_SIDE});
+        Disks.insert({x: rg, y: lf, side: LIGHT_SIDE});
         Players.insert({id: 1, active: true});
         Players.insert({id: 2, active: false});
     }
@@ -361,10 +363,6 @@ if (Meteor.isClient) {
             }
             console.log("hit cell " + xId + "," + yId);
             addDisk(xId, yId, activePlayer().id);
-        }),
-        'click #reset_button' : (function (event) {
-            console.log("Reset button clicked");
-            respawn();
         })
     });
 
@@ -384,62 +382,40 @@ if (Meteor.isClient) {
         }
     };
 
-    var calc_game_status = function () {
-        var player1 = Players.findOne({id: 1})
-        var player2 = Players.findOne({id: 2})
+    Template.gameStatus.status = function() {
+        var result = {};
+        var player1 = Players.findOne({id: 1});
+        var player2 = Players.findOne({id: 2});
         if (typeof player1 === 'undefined' || typeof player2 === 'undefined')
-            return;
-        var first_cnt = Disks.find({side: 1}).count();
-        var second_cnt = Disks.find({side: 2}).count();
-        var result = {
-            first: {
-                score: first_cnt
-            },
-            second: {
-                score: second_cnt
-            },
-        };
-        result.first.css = "wait_move";
-        result.second.css = "wait_move";
+            return result;
+        var darkScore = Disks.find({side: DARK_SIDE}).count();
+        var lightScore = Disks.find({side: LIGHT_SIDE}).count();
+        result.darkScore    = darkScore;
+        result.lightScore   = lightScore;
         if (player1.active) {
-            result.first.css = "do_move";
+            result.darkMove = true;
         } else if (player2.active) {
-            result.second.css = "do_move";
+            result.lightMove = true;
         } else {
-            if (first_cnt === second_cnt) {
-                result.game_result = "Draw";
-            } else if(first_cnt > second_cnt) {
-                result.game_result = "Dark side won, Luke!";
+            if (darkScore === lightScore) {
+                result.results = "Draw";
+            } else if(darkScore > lightScore) {
+                result.results = "Dark side won, Luke!";
             } else {
-                result.game_result = "Light side won, Luke!";
+                result.results = "Light side won, Luke!";
             }
         }
-        if (typeof result.game_result === 'undefined')
-            result.game_result = "";
+        result.darkPlayer   = "Alice";
+        result.lightPlayer  = "Bob";
         return result;
-    }
-
-    Template.game_status.rendered = function () {
-        var self = this;
-        if (!self.handle) {
-            self.handle = Deps.autorun(function () {
-                var stat = calc_game_status();
-                if (typeof stat === 'undefined')
-                    return;
-                var status = "<div id=\"first\" class=\"" + stat.first.css + "\">\n";
-                status += "Dark side: " + stat.first.score + "\n";
-                status += "</div>\n";
-                status += "<div id=\"second\" class=\"" + stat.second.css + "\">\n";
-                status += "Light side: " + stat.second.score + "\n";
-                status += "</div>\n";
-                var html = "<div id=\"status\">\n" + status + "</div><br />\n" +
-                    "<div style=\"clear:both\">" +
-                    stat.game_result + "\n</div>\n";
-                $('#game_info').html(html);
-                console.log("game status rendered");
-            });
-        }
     };
+
+    Template.gameStatus.events({
+        'click #reset_button' : (function (event) {
+            console.log("Reset button clicked");
+            respawn();
+        })
+    });
 }
 
 if (Meteor.isServer) {
