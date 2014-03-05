@@ -7,6 +7,7 @@
 
 Players = new Meteor.Collection("players");
 Disks   = new Meteor.Collection("disks");
+Games   = new Meteor.Collection("games");
 var CELL_SIZE           = 33; /* including border at one side */
 var CELL_BORDER         = 2;
 var CELL_CENTER_OFFSET  = CELL_BORDER + CELL_SIZE / 2;
@@ -41,6 +42,29 @@ if (Meteor.isClient) {
     var cells = new Array(N);
     for (var i = 0; i < N; ++i)
         cells[i] = new Array(N);
+
+    var getUserId = function () {
+        return (Meteor.user() && Meteor.user()._id) || '';
+    }
+
+    var getUserNameById = function (id) {
+        return Meteor.users.findOne({_id: id}).username;
+    }
+
+    var getIdByUserName = function (username) {
+        return Meteor.users.find({username: username}).fetch()[0]._id;
+    }
+
+    var getGame = function () {
+        var user = getUserId();
+        if (user === '')
+            return undefined;
+        var asDark = Games.findOne({dark: user, darkAccepted: true});
+        if (typeof asDark !== 'undefined')
+            return asDark;
+        /* or game on light side */
+        return Games.findOne({light: user, lightAccepted: true});
+    }
 
     var getField = function () {
         if (typeof field === 'undefined') {
@@ -108,17 +132,13 @@ if (Meteor.isClient) {
         return GRID_BORDER + cellId * CELL_SIZE + CELL_CENTER_OFFSET - 2;
     }
 
-    var drawDisksOnSvg = function () {
+    var drawDisksOnSvg = function (gameId) {
         var fd = getField();
         fd.disks.selectAll("circle").remove();
         flipContext = undefined;
         fd.flip.selectAll("ellipse").remove();
         fd.vacant.selectAll("circle").remove();
-        var nonFlippingDisks = Disks.find({
-            $and: [
-                {$or: [ {side: DARK_SIDE }, {side: LIGHT_SIDE } ]},
-                {flip: {$not: true}}
-            ]}).fetch();
+        var nonFlippingDisks = Disks.find({flip: {$not: true}, game: gameId}).fetch();
         fd.disks
             .selectAll("circle")
             .data(nonFlippingDisks)
@@ -132,9 +152,11 @@ if (Meteor.isClient) {
             })
             .style("stroke", DISK_BORDER_COLOR)
             .style("stroke-width", DISK_BORDER);
-        var flippingDisks = Disks.find({flip: true}).fetch();
+        if (Games.findOne({_id: gameId}).finished)
+            return;
+        var flippingDisks = Disks.find({flip: true, game: gameId}).fetch();
         if (flippingDisks.length === 0) {
-            drawVacancies();
+            drawVacancies(gameId);
             return;
         }
         var ellipsis = fd
@@ -152,6 +174,14 @@ if (Meteor.isClient) {
             "selection": ellipsis,
         };
         flipHandler();
+    }
+
+    var clearField = function () {
+        var fd = getField();
+        fd.disks.selectAll("circle").remove();
+        flipContext = undefined;
+        fd.flip.selectAll("ellipse").remove();
+        fd.vacant.selectAll("circle").remove();
     }
 
     var sideToColor = function(side) {
@@ -221,22 +251,19 @@ if (Meteor.isClient) {
         return vacancies;
     };
 
-    var drawVacancies = function () {
-        if (!gameRunning())
-            return;
-        var player = activePlayer().id;
-        var vacancies = findVacancies(player);
+    var drawVacancies = function (gameId) {
+        var game = Games.findOne({_id: gameId});
+        var playerSide = game.activeDark ? DARK_SIDE : LIGHT_SIDE;
+        var vacancies = findVacancies(playerSide);
         console.log("found " + vacancies.length +
-            " vacancies for player#" + player);
+            " vacancies for player on side#" + playerSide);
         if (vacancies.length === 0) {
-            player = nextMove();
-            console.log("trying with another player: " + player);
-            if (typeof player === 'undefined')
-                return;
-            vacancies = findVacancies(player);
+            playerSide = nextMove(gameId, playerSide);
+            console.log("trying with player on side#" + playerSide);
+            vacancies = findVacancies(playerSide);
             if (vacancies.length === 0) {
                 console.log("vacancies not found for both players");
-                finishGame();
+                finishGame(gameId);
             }
         }
         var fd = getField();
@@ -257,13 +284,28 @@ if (Meteor.isClient) {
         return 0 <= i && i < N && 0 <= j && j < N;
     }
 
-    var addDisk = function (x, y, player) {
+    var oppositeSide = function(side) {
+        if (side === DARK_SIDE)
+            return LIGHT_SIDE;
+        return DARK_SIDE;
+    }
+
+    var addDisk = function (x, y) {
         if (cells[x][y] !== VACANT_CELL) {
             console.log("Cell isn't available");
             return;
         }
-        Disks.insert({x: x, y: y, side: player});
-        var other = 3 - player;
+        var game = getGame();
+        var user = getUserId();
+        if (!(game.dark === user && game.activeDark)
+            && !(game.light === user && !game.activeDark)) {
+            console.log("current player is waiting");
+            return;
+        }
+        var gameId = game._id;
+        var side = game.activeDark ? DARK_SIDE : LIGHT_SIDE;
+        Disks.insert({x: x, y: y, side: side, game: gameId});
+        var other = oppositeSide(side);
         for (var k = 0; k < adj.length; ++k) {
             var dx = adj[k][0],
                 dy = adj[k][1];
@@ -275,67 +317,70 @@ if (Meteor.isClient) {
                 v += dy;
                 ++len;
             }
-            if (len > 0 && cellValid(u, v) && cells[u][v] === player) {
+            if (len > 0 && cellValid(u, v) && cells[u][v] === side) {
                 for (; len > 0; --len) {
                     u -= dx;
                     v -= dy;
-                    Disks.update({_id: Disks.findOne({x: u, y: v})._id},
-                        {$set: {side: player, flip: true}});
+                    Disks.update({_id: Disks.findOne({x: u, y: v, game: gameId})._id},
+                        {$set: {side: side, flip: true}});
                 }
             }
         }
-        nextMove();
+        nextMove(gameId, side);
     }
 
-    var gameRunning = function () {
-        return Players.find({active: true}).count() === 1 &&
-               Players.find({active: false}).count() === 1 &&
-                Disks.find({}).count() >= 4;
+    /* returns side, which is opposite to @playerSide */
+    var nextMove = function (gameId, playerSide) {
+        var activeDark = playerSide === DARK_SIDE ? true : false;
+        var nextActiveDark = !activeDark;
+        Games.update({_id: gameId}, {$set: {activeDark: nextActiveDark}});
+        return nextActiveDark ? DARK_SIDE : LIGHT_SIDE;
     }
 
-    var respawn = function () {
-        var disks = Disks.find().count();
-        for (; disks > 0; --disks)
-            Disks.remove({_id: Disks.findOne({})._id});
-        var players = Players.find({}).count();
-        for (; players > 0; --players)
-            Players.remove({_id: Players.findOne({})._id});
-        flipContext = undefined;
+    var finishGame = function (gameId) {
+        Games.update({_id: gameId}, {$set: {finished: true}});
+    }
+
+    var createGame = function (currentForDark) {
+        var opponentName = $('#createGame select option:selected').val();
+        var opponent = getIdByUserName(opponentName);
+        var me = getUserId();
+        var newGame = {
+            /* game always is started by dark side move */
+            activeDark:     true,
+            finished:       false,
+            darkAccepted:   false,
+            lightAccepted:  false,
+        };
+        if (currentForDark) {
+            newGame.dark = me;
+            newGame.darkAccepted = true;
+            newGame.light = opponent;
+        } else {
+            newGame.dark = opponent;
+            newGame.light = me;
+            newGame.lightAccepted = true;
+        }
+        var gameId = Games.insert(newGame);
         var rg = Math.floor(N / 2);
         var lf = rg - 1;
-        Disks.insert({x: lf, y: lf, side: DARK_SIDE});
-        Disks.insert({x: rg, y: rg, side: DARK_SIDE});
-        Disks.insert({x: lf, y: rg, side: LIGHT_SIDE});
-        Disks.insert({x: rg, y: lf, side: LIGHT_SIDE});
-        Players.insert({id: 1, active: true});
-        Players.insert({id: 2, active: false});
-    }
+        Disks.insert({x: lf, y: lf, side: DARK_SIDE, game: gameId});
+        Disks.insert({x: rg, y: rg, side: DARK_SIDE, game: gameId});
+        Disks.insert({x: lf, y: rg, side: LIGHT_SIDE, game: gameId});
+        Disks.insert({x: rg, y: lf, side: LIGHT_SIDE, game: gameId});
+    };
 
-    var nextMove = function () {
-        var active = activePlayer();
-        var inactive = inactivePlayer();
-        if (typeof active !== 'undefined' && typeof inactive !== 'undefined') {
-            Players.update({_id: inactive._id}, {$set: {active: true}});
-            Players.update({_id: active._id}, {$set: {active: false}});
-            return inactive.id;
+    var destroyGame = function (gameId) {
+        console.log("destroyGame called");
+        var game = Games.findOne({_id: gameId});
+        if (typeof game === 'undefined')
+            return;
+        var disks = Disks.find({game: gameId}).count();
+        for (; disks > 0; --disks) {
+            Disks.remove({_id: Disks.findOne({game: gameId})._id});
         }
-        return undefined;
-    }
-
-    var finishGame = function () {
-        var active = activePlayer();
-        var inactive = inactivePlayer();
-        if (typeof active !== 'undefined' && typeof inactive !== 'undefined')
-            Players.update({_id: active._id}, {$set: {active: false}});
-    }
-
-    var activePlayer = function () {
-        return Players.findOne({active: true});
-    }
-
-    var inactivePlayer = function () {
-        return Players.findOne({active: false});
-    }
+        Games.remove({_id: gameId});
+    };
 
     Template.board.events({
         'click svg' : (function (event) {
@@ -362,7 +407,7 @@ if (Meteor.isClient) {
                 console.log("miss: rightmost or bottom border");
             }
             console.log("hit cell " + xId + "," + yId);
-            addDisk(xId, yId, activePlayer().id);
+            addDisk(xId, yId);
         })
     });
 
@@ -370,52 +415,167 @@ if (Meteor.isClient) {
         var self = this;
         if (!self.handle) {
             self.handle = Deps.autorun(function () {
-                var disks = Disks.find();
+                var game = getGame();
+                if (typeof game === 'undefined') {
+                    clearField();
+                    return;
+                }
+                var disks = Disks.find({game: game._id});
                 for (var i = 0; i < N; ++i)
                     for (var j = 0; j < N; ++j)
                         cells[i][j] = FREE_CELL;
                 disks.forEach(function(disk) {
                     cells[disk.x][disk.y] = disk.side;
                 });
-                drawDisksOnSvg();
+                drawDisksOnSvg(game._id);
             });
         }
     };
 
+    Template.gameStatus.showStatus = function () {
+        return typeof getGame() !== 'undefined';
+    };
+
     Template.gameStatus.status = function() {
-        var result = {};
-        var player1 = Players.findOne({id: 1});
-        var player2 = Players.findOne({id: 2});
-        if (typeof player1 === 'undefined' || typeof player2 === 'undefined')
+        var result = {
+            darkScore: 0,
+            lightScore: 0
+        };
+        var user = getUserId();
+        if (user === '' || user === null || typeof user === 'undefined')
             return result;
-        var darkScore = Disks.find({side: DARK_SIDE}).count();
-        var lightScore = Disks.find({side: LIGHT_SIDE}).count();
-        result.darkScore    = darkScore;
-        result.lightScore   = lightScore;
-        if (player1.active) {
-            result.darkMove = true;
-        } else if (player2.active) {
-            result.lightMove = true;
-        } else {
-            if (darkScore === lightScore) {
+        var game = getGame();
+        if (typeof game === 'undefined')
+            return result;
+        result.darkScore  = Disks.find({side:  DARK_SIDE, game: game._id}).count();
+        result.lightScore = Disks.find({side: LIGHT_SIDE, game: game._id}).count();
+        if (game.finished) {
+            if (result.darkScore === result.lightScore) {
+                result.mood = 'text-info';
                 result.results = "Draw";
-            } else if(darkScore > lightScore) {
+            } else if (result.darkScore > result.lightScore) {
+                result.mood = user === game.dark ? 'text-success' : 'text-error';
                 result.results = "Dark side won, Luke!";
             } else {
+                result.mood = user === game.light ? 'text-success' : 'text-error';
                 result.results = "Light side won, Luke!";
             }
+        } else {
+            if (game.activeDark)
+                result.darkMove = true;
+            else
+                result.lightMove = true;
         }
-        result.darkPlayer   = "Alice";
-        result.lightPlayer  = "Bob";
+        result.darkPlayer   = Meteor.users.findOne({_id: game.dark}).username;
+        result.lightPlayer  = Meteor.users.findOne({_id: game.light}).username;
         return result;
     };
 
-    Template.gameStatus.events({
-        'click #reset_button' : (function (event) {
-            console.log("Reset button clicked");
-            respawn();
+    Template.gameControls.events({
+        'click #giveUpButton' : (function (event) {
+            console.log("GiveUp button clicked");
+            var game = getGame();
+            if (typeof game !== 'undefined')
+                destroyGame(game._id);
+        }),
+        'click #playForDark' : (function (event) {
+            createGame(true);
+        }),
+        'click #playForLight' : (function (event) {
+            createGame(false);
+        }),
+        'click #cancelWaiting' : (function (event) {
+            console.log("clicked cancelWaiting");
+            var game = getGame();
+            if (typeof game !== 'undefined')
+                destroyGame(game._id);
+        }),
+        'click #acceptGame' : (function(event) {
+            var opponentName = $("#askedToPlay select option:selected").val();
+            console.log("clicked to accept game with " + opponentName);
+            var opponent = Meteor.users.findOne({username: opponentName});
+            if (typeof opponent === 'undefined') {
+                console.log("user " + opponentName + " not found");
+                return;
+            }
+            var me = getUserId();
+            var asDark = Games.findOne({
+                dark: me, light: opponent._id,
+                darkAccepted: false, lightAccepted: true
+            });
+            if (typeof asDark !== 'undefined') {
+                Games.update({_id: asDark._id}, {$set: {darkAccepted: true}});
+                console.log("game on dark side is accepted!");
+                return;
+            }
+            var asLight = Games.findOne({
+                dark: opponent._id, light: me,
+                darkAccepted: true, lightAccepted: false
+            });
+            if (typeof asLight !== 'undefined') {
+                Games.update({_id: asLight._id}, {$set: {lightAccepted: true}});
+                console.log("game on light side is accepted!");
+                return;
+            }
+            console.log("game to accept not found");
+        }),
+        'click #closeGame' : (function (event) {
+            var game = getGame();
+            if (typeof game !== 'undefined')
+                destroyGame(game._id);
         })
     });
+
+    Template.gameControls.loggedIn = function () {
+        var user = Meteor.user();
+        return user !== null 
+            && (typeof Meteor.user() !== 'undefined');
+    };
+
+    /* returns hash with opponent name or undefined */
+    Template.gameControls.waitingAcceptance = function () {
+        var user = getUserId();
+        var asDark = Games.find({dark: user, darkAccepted: true, lightAccepted: false});
+        if (asDark.count() > 0)
+            return { opponent: getUserNameById(asDark.fetch()[0].light) };
+        var asLight = Games.find({light: user, darkAccepted: false, lightAccepted: true});
+        if (asLight.count() > 0)
+            return { opponent: getUserNameById(asLight.fetch()[0].dark) };
+        return undefined;
+    };
+
+    /* returns array of usernames or undefined */
+    Template.gameControls.askedForAcceptance = function () {
+        var user = getUserId();
+        var gamesAsDark = _.map(Games.find({dark: user, darkAccepted: false}).fetch(), function (g) {
+            return getUserNameById(g.light);
+        });
+        var gamesAsLight = _.map(Games.find({light: user, lightAccepted: false}).fetch(), function (g) {
+            return getUserNameById(g.dark);
+        });
+        return gamesAsDark.concat(gamesAsLight);
+    };
+
+    Template.gameControls.inGame = function () {
+        var user = getUserId();
+        return Games.find({$or: [{dark: user}, {light: user}], darkAccepted: true, lightAccepted: true}).count() > 0;
+    };
+
+    Template.gameControls.afterGame = function () {
+        return getGame().finished;
+    }
+
+    Template.gameControls.noGame = function () {
+        return typeof getGame() === 'undefined';
+    }
+
+    Template.gameControls.opponents = function () {
+        return _.map(Meteor.users.find().fetch(), function (u) {
+            return u.username;
+        });
+    }
+
+    Accounts.ui.config({ passwordSignupFields: 'USERNAME_AND_OPTIONAL_EMAIL' });
 }
 
 if (Meteor.isServer) {

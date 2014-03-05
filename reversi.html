@@ -14,7 +14,8 @@
 		    </div>
 		<div>
 		{{> board}}
-  		{{> gameStatus}}
+		{{> gameStatus}}
+  		{{> gameControls}}
 	</div>
 </body>
 
@@ -23,6 +24,10 @@
 </template>
 
 <template name="gameStatus">
+{{# if showStatus }}
+	{{#if status.results }}
+		<p class={{status.mood}}>{{status.results}}</p>
+	{{/if}}
 	<div class="row">
 		<div class="span2 text-center">
 			{{#if status.darkMove }}
@@ -31,11 +36,10 @@
 			<div style="border: dashed 1px white; border-radius: 10px;">
 			{{/if}}
 				<p class="lead">
-					{{ status.darkScore }}
 					<svg width="24" height="24">
 						<circle cx="12" cy="12" r="10" fill="black" stroke="black" stroke-width="2"/>
 					</svg>
-					
+					{{ status.darkScore }}
 				</p>
 				<span class="label label-inverse">
 					{{ status.darkPlayer }}
@@ -60,10 +64,64 @@
 			</div>
 		</div>
 	</div>
+{{/if}}
+</template>
+
+<template name="gameControls">
 	<br />
 	<div class="row">
-		<div class="span4 text-center">
-			<button type="button" class="btn btn-danger" id="reset_button">Reset</button>
+		<div class="span5">
+			{{#if loggedIn }}
+				{{#if inGame}}
+					{{#if afterGame}}
+						<button type="button" class="btn btn-success" id="closeGame">Quit game</button>
+					{{else}}
+						<button type="button" class="btn btn-danger" id="giveUpButton">Give up</button>
+					{{/if}}
+				{{else}}
+					{{#if askedForAcceptance}}
+						<form class="form-horizontal" id="askedToPlay">
+							<legend>Asked to play with</legend>
+							<div class="control-group">
+								<select>
+									{{#each askedForAcceptance}}
+										<option>{{ this }}</option>
+									{{/each}}
+								</select>
+								<button type="button" class="btn btn-success" id="acceptGame">Ok, go!</button>
+							</div>
+						</form>
+					{{/if}}
+					{{#if noGame}}
+						<form class="form-horizontal" id="createGame">
+							<legend>Create game</legend>
+							<div class="control-group">
+								<select>
+									<option selected disabled>Select an opponent</option>
+									{{#each opponents }}
+										<option>{{ this }}</option>
+									{{/each}}
+								</select>
+							</div>
+							<div class="control-group">
+								<button type="button" class="btn btn-inverse" id="playForDark">Play for dark side</button>
+								<button type="button" class="btn btn-default" id="playForLight">Play for light side</button>
+							</div>
+						</form>
+					{{else}}
+						{{#if waitingAcceptance}}
+							<div class="well">
+								<p class="text-info">
+									Waiting for acceptance by <strong>{{ waitingAcceptance.opponent }}</strong>
+								</p>
+								<button type="button" class="btn btn-danger" id="cancelWaiting">Cancel</button>
+							</div>
+						{{/if}}
+					{{/if}}
+				{{/if}}
+			{{else}}
+				Log in to play!
+			{{/if}}
 		</div>
 	</div>
 </template>
